@@ -1,0 +1,7 @@
+.env
+.env.*
+node_modules/
+temp/
+*.pdf
+*-firebase-adminsdk-*.json
+rag-chatbot-bb847-firebase-adminsdk-fbsvc-aed25f87d8.json
