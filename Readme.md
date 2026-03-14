@@ -1,60 +1,214 @@
-https://python.langchain.com/docs/tutorials/rag/
+# RAG PDF Chatbot Backend
 
-Multer handles PDF upload
-Use LangChain.js PDFLoader to extract text
-Use LangChain.js TextSplitter to chunk it
-Use OpenAI/HF Embeddings to vectorize chunks
-Store in Pinecone (or local MemoryVectorStore)
-On user query:
-   - Embed query
-   - Search for similar chunks
-   - Feed result into GPT (via LangChain)
-Return response
+A Node.js backend for a PDF-based Retrieval-Augmented Generation system. Users upload PDFs, the server chunks and embeds the content, stores vectors in Pinecone, and answers questions using Azure OpenAI with document-grounded context.
 
-Retrieval-Augmented Generation (RAG) - Project Overview
-What is RAG?
-RAG consists of two main components:
-Indexing (Preprocessing)
-Retrieval and Generation (Runtime)
+This repository was built as a 5th semester minor project and is structured as a practical backend for a document chat application.
 
-1. Indexing Pipeline
-This happens before user queries — usually offline. The goal is to ingest and prepare data for semantic search.
+## Highlights
 
-Steps Involved:
- a. Load Documents
-   In this project, we use LangChain’s PDFLoader, which:
-   Loads PDF files
-   Works locally (from the file system only)
-   Does not support cloud URLs directly
+- PDF ingestion pipeline using Multer and LangChain's PDF loader
+- Recursive text chunking for better retrieval quality
+- Azure OpenAI embeddings and chat completion integration
+- Pinecone vector search with per-document namespaces
+- Firebase token verification for protected routes
+- Conversational memory per authenticated user session
+- Simple Express API that is ready to connect to a frontend
 
-b. Split into Chunks
-   Long documents are broken into smaller pieces for effective embedding.
+## Tech Stack
 
-   There are multiple chunking techniques:
-    Length-based
-    Text-based
-    Document-based
-    Semantic-based
-    In this project, we use text-based recursive chunking, via RecursiveCharacterTextSplitter.
-    This tries to split documents without breaking sentences or words, while keeping chunks within a size limit (e.g. 500 characters) and some overlap (e.g. 50 characters).
+| Layer | Tools |
+| --- | --- |
+| Runtime | Node.js, Express |
+| Document Processing | Multer, LangChain PDFLoader, RecursiveCharacterTextSplitter |
+| Embeddings + LLM | Azure OpenAI via LangChain |
+| Vector Database | Pinecone |
+| Authentication | Firebase Admin SDK |
+| Development | Nodemon, dotenv |
 
-c. Generate Embeddings
-    Each chunk is converted into a numerical vector using Azure OpenAI’s embedding model (text-embedding-small-3).
+## How It Works
 
-d. Store in Vector DB (Pinecone)
-   We use Pinecone to store these embeddings.
+```mermaid
+flowchart LR
+    A[Client uploads PDF] --> B[Multer stores file temporarily]
+    B --> C[PDFLoader extracts text]
+    C --> D[RecursiveCharacterTextSplitter creates chunks]
+    D --> E[Azure OpenAI Embeddings]
+    E --> F[Pinecone namespace per file]
+    G[User asks question] --> H[Embed query]
+    H --> I[Similarity search in Pinecone]
+    I --> J[Prompt with retrieved context + chat history]
+    J --> K[Azure OpenAI Chat Model]
+    K --> L[Grounded answer returned]
+```
 
-  A namespace is used to logically separate data.
-   In our case, each PDF gets its own namespace within the Pinecone index.
+## Core Flow
 
-2. Retrieval & Generation Pipeline
-This runs at runtime, when the user submits a query.
+### 1. Document indexing
 
-Steps:
-User enters a question
-We embed the question
-We search Pinecone for similar chunks using vector similarity
-The top-k relevant chunks are passed to the LLM (via prompt)
-The model generates an answer grounded in your data
+When a PDF is uploaded:
+
+1. The file is accepted through Multer.
+2. LangChain's PDF loader reads the document.
+3. The text is split into chunks with:
+   - `chunkSize: 500`
+   - `chunkOverlap: 50`
+4. Each chunk is embedded using Azure OpenAI.
+5. The vectors are stored in Pinecone using the original filename as the namespace.
+
+### 2. Retrieval and answering
+
+When a user asks a question:
+
+1. The query is embedded.
+2. Pinecone performs similarity search against the selected namespace.
+3. The top matching chunks are assembled into prompt context.
+4. Prior chat history for that user is injected into the prompt.
+5. Azure OpenAI generates a response constrained to the retrieved context.
+
+## Features in the Current Implementation
+
+- Protected upload, ask, and delete routes using Firebase ID token verification
+- A dev-only public upload route controlled by `ALLOW_PUBLIC_UPLOAD=true`
+- Health endpoint for uptime checks
+- In-memory conversation history using `ChatMessageHistory`
+
+## API Endpoints
+
+### `GET /health`
+
+Returns a basic status payload.
+
+### `POST /file/upload`
+
+Protected route. Accepts a PDF file as `multipart/form-data` with the field name `file`.
+
+Behavior:
+
+- loads the PDF
+- splits it into chunks
+- embeds and stores chunks in Pinecone
+- deletes the local temp file after processing
+
+### `POST /file/upload-public`
+
+Available only when `ALLOW_PUBLIC_UPLOAD=true` is set in the environment.
+
+### `POST /ask/ai`
+
+Protected route. Expects JSON:
+
+```json
+{
+  "query": "What is the paper about?",
+  "namespace": "my-file.pdf"
+}
+```
+
+Returns a grounded answer based on the most relevant stored chunks.
+
+### `DELETE /file/delete/:filename`
+
+Protected route. Deletes all vectors stored under the given Pinecone namespace.
+
+## Project Structure
+
+```text
+.
+|-- controller/
+|   |-- embedAndStore.js
+|   |-- retreiveDocument.js
+|-- middleware/
+|   |-- multer.js
+|   |-- verifyToken.js
+|-- temp/
+|-- utils/
+|   |-- ChatModel.js
+|   |-- EmbeddingModel.js
+|   |-- firebase.js
+|   |-- Pinecone.js
+|-- index.js
+|-- package.json
+```
+
+## Local Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/adarsh-gupta-01/rag-pdf-chatbot-Backend.git
+cd rag-pdf-chatbot-Backend
+```
+
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Create a `.env` file
+
+Use the following variables as a starting point:
+
+```env
+PORT=5000
+ALLOW_PUBLIC_UPLOAD=false
+
+PINECONE_API_KEY=your_pinecone_api_key
+PINECONE_INDEX_NAME=your_pinecone_index_name
+
+AZURE_OPENAI_KEY=your_chat_model_key
+AZURE_OPENAI_INSTANCE=your_chat_model_instance
+AZURE_OPENAI_DEPLOYMENT_NAME=your_chat_model_deployment
+AZURE_OPENAI_VERSION=your_chat_model_api_version
+
+AZURE_OPENAI_API_KEY=your_embeddings_key
+AZURE_OPENAI_API_INSTANCE_NAME=your_embeddings_instance
+AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME=your_embeddings_deployment
+AZURE_OPENAI_API_VERSION=your_embeddings_api_version
+
+FIREBASE_PROJECT_ID=your_firebase_project_id
+FIREBASE_CLIENT_EMAIL=your_firebase_client_email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+### 4. Start the server
+
+```bash
+npm run dev
+```
+
+The backend will run on `http://localhost:5000` unless overridden by `PORT`.
+
+## Authentication
+
+Protected routes expect a Firebase ID token in the `Authorization` header:
+
+```http
+Authorization: Bearer <firebase_id_token>
+```
+
+## Notes and Limitations
+
+- Chat memory is stored in memory, so it resets when the server restarts.
+- Pinecone namespaces are based on filenames, so filename collisions should be considered in production.
+- The `temp/` folder is used only for transient uploaded files and is excluded from Git.
+- There is no test suite yet in the current version.
+
+## Future Improvements
+
+- Persistent conversation memory using Redis or a database
+- Better namespace strategy using file IDs instead of raw filenames
+- Role-based document ownership and access control
+- Streaming responses for a better chat UX
+- Automated tests and deployment pipeline
+
+## Why This Project Matters
+
+This backend demonstrates a complete RAG pipeline in a way that is practical, understandable, and extendable. It combines document ingestion, vector storage, authentication, and grounded AI responses into a single service that can power academic assistants, research tools, or internal knowledge bots.
+
+## Author
+
+Adarsh Gupta  
+5th Semester Minor Project
 
 
